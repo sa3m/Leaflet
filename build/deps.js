@@ -47,6 +47,12 @@ var deps = {
 		deps: ['TileLayer']
 	},
 
+	TileLayerBing: {
+		src: ['layer/tile/TileLayer.Bing.js'],
+		desc: 'Bing Tile layer.',
+		deps: ['TileLayer']
+	},
+
 	ImageOverlay: {
 		src: ['layer/ImageOverlay.js'],
 		desc: 'Used to display an image over a particular rectangular area of the map.'
@@ -220,6 +226,13 @@ var deps = {
 		      'map/ext/Map.Control.js',
 		      'control/Control.Layers.js'],
 		desc: 'Layer Switcher control.'
+	},
+
+	ControlBingGeocoder: {
+		src: ['control/Control.js',
+		      'map/ext/Map.Control.js',
+		      'control/Control.BingGeocoder.js'],
+		desc: 'Geocoder control.'
 	},
 
 

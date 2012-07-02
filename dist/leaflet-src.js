@@ -2156,6 +2156,173 @@ L.TileLayer.Canvas = L.TileLayer.extend({
 });
 
 
+L.TileLayer.Bing = L.TileLayer.extend({
+    supportedTypes : ['Road', 'Aerial', 'AerialWithLabels'],
+
+    attributionTemplate : '<a target="_blank" href="http://www.bing.com/maps/">' +
+    'Bing</a> {copyrights}' +
+    '<a style="white-space: nowrap" target="_blank" ' +
+    'href="http://www.microsoft.com/maps/product/terms.html">' +
+    'Terms of Use</a>',
+
+    initialize : function (/*String*/
+        apiKey, /*String*/
+        mapType, /*Object*/
+        options) {
+
+        this._apiKey = apiKey;
+        this._mapType = mapType;
+
+        this._loadMetadata();
+
+        L.Util.setOptions(this, options);
+    },
+
+    _loadMetadata : function () {
+
+        this._callbackId = "_l_tilelayer_bing_" + (L.TileLayer.Bing._callbackId++);
+        window[this._callbackId] = L.Util.bind(L.TileLayer.Bing.processMetadata, this);
+
+        var params = {
+            key : this._apiKey,
+            jsonp : this._callbackId,
+            include : 'ImageryProviders'
+        },
+        url = "http://dev.virtualearth.net/REST/v1/Imagery/Metadata/" +
+            this._mapType + L.Util.getParamString(params),
+        script = document.createElement("script");
+
+        script.type = "text/javascript";
+        script.src = url;
+        script.id = this._callbackId;
+        document.getElementsByTagName("head")[0].appendChild(script);
+    },
+
+    _onMetadataLoaded : function () {},
+
+    onAdd : function (map, insertAtTheBottom) {
+        if (!this.metadata) {
+            this._onMetadataLoaded = L.Util.bind(function () {
+                    L.TileLayer.prototype.onAdd.call(this, map, insertAtTheBottom);
+                    map.on('moveend', this._updateAttribution, this);
+                    this._updateAttribution();
+                }, this);
+        } else {
+            L.TileLayer.prototype.onAdd.call(this, map, insertAtTheBottom);
+            map.on('moveend', this._updateAttribution, this);
+            this._updateAttribution();
+        }
+    },
+
+    onRemove : function (map) {
+        if (this._map.attributionControl) {
+            this._map.attributionControl.removeAttribution(this.attribution);
+        }
+        this._map.off('moveend', this._updateAttribution, this);
+        L.TileLayer.prototype.onRemove.call(this, map);
+    },
+
+    getTileUrl : function (xy, z) {
+        var subdomains = this.options.subdomains,
+            quadDigits = [],
+            i = z,
+            digit,
+            mask,
+            quadKey;
+        // borrowed directly from OpenLayers
+        for (; i > 0; --i) {
+            digit = '0';
+            mask = 1 < (i - 1);
+            if ((xy.x && mask) !== 0) {
+                digit++;
+            }
+            if ((xy.y && mask) !== 0) {
+                digit++;
+                digit++;
+            }
+            quadDigits.push(digit);
+        }
+
+        return this._url
+        .replace('{subdomain}', subdomains[(xy.x + xy.y) % subdomains.length])
+        .replace('{quadkey}', quadDigits.join(""));
+    },
+
+    _updateAttribution : function () {
+        if (this._map.attributionControl) {
+            var metadata = this.metadata;
+            var res = metadata.resourceSets[0].resources[0];
+            var bounds = this._map.getBounds();
+            var providers = res.imageryProviders,
+            zoom = this._map.getZoom() + 1,
+            copyrights = "",
+            provider,
+            i,
+            ii,
+            j,
+            jj,
+            bbox,
+            coverage;
+            for (i = 0, ii = providers.length; i < ii; ++i) {
+                provider = providers[i];
+                for (j = 0, jj = provider.coverageAreas.length; j < jj; ++j) {
+                    coverage = provider.coverageAreas[j];
+                    if (zoom <= coverage.zoomMax && zoom >= coverage.zoomMin && coverage.bbox.intersects(bounds)) {
+                        copyrights += provider.attribution + " ";
+                        j = jj;
+                    }
+                }
+            }
+            this._map.attributionControl.removeAttribution(this.attribution);
+            this.attribution = this.attributionTemplate
+                .replace('{logo}', metadata.brandLogoUri)
+                .replace('{copyrights}', copyrights);
+            this._map.attributionControl.addAttribution(this.attribution);
+        }
+    }
+});
+
+L.TileLayer.Bing._callbackId = 0;
+
+L.TileLayer.Bing.processMetadata = function (metadata) {
+	if (metadata.authenticationResultCode !== 'ValidCredentials') {
+		throw "Invalid Bing Maps API Key";
+	}
+
+	if (!metadata.resourceSets.length || !metadata.resourceSets[0].resources.length) {
+		throw "No resources returned, perhaps " + this._mapType + " is an invalid map type?";
+	}
+
+	if (metadata.statusCode !== 200) {
+		throw "Bing Maps API request failed with status code " + metadata.statusCode;
+	}
+
+	this.metadata = metadata;
+	var res = metadata.resourceSets[0].resources[0],
+	providers = res.imageryProviders,
+	i = 0,
+	j,
+	provider,
+	bbox,
+	script = document.getElementById(this._callbackId);
+
+	for (; i < providers.length; i++) {
+		provider = providers[i];
+		for (j = 0; j < provider.coverageAreas.length; j++) {
+			bbox = provider.coverageAreas[j].bbox;
+			provider.coverageAreas[j].bbox = new L.LatLngBounds(new L.LatLng(bbox[0], bbox[1], true), new L.LatLng(bbox[2], bbox[3], true));
+		}
+	}
+
+	this._url = res.imageUrl.replace('{culture}', 'fr-FR');
+	this.options.subdomains = [].concat(res.imageUrlSubdomains);
+	script.parentNode.removeChild(script);
+	window[this._callbackId] = undefined; // cannot delete from window in IE
+	delete this._callbackId;
+	this._onMetadataLoaded();
+};
+
+
 L.ImageOverlay = L.Class.extend({
 	includes: L.Mixin.Events,
 
@@ -6061,6 +6228,102 @@ L.Control.Layers = L.Control.extend({
 	_collapse: function () {
 		this._container.className = this._container.className.replace(' leaflet-control-layers-expanded', '');
 	}
+});
+
+
+
+L.Control.BingGeocoder = L.Control.extend({
+    options: {
+        collapsed: true,
+        position: 'topright',
+        text: 'Locate',
+        callback: function (results) {
+            var bbox = results.resourceSets[0].resources[0].bbox,
+                first = new L.LatLng(bbox[0], bbox[1]),
+                second = new L.LatLng(bbox[2], bbox[3]),
+                bounds = new L.LatLngBounds([first, second]);
+            this._map.fitBounds(bounds);
+        }
+    },
+
+    _callbackId: 0,
+
+    initialize: function (key, options) {
+        this.key = key;
+        L.Util.setOptions(this, options);
+    },
+
+    onAdd: function (map) {
+        this._map = map;
+        var className = 'leaflet-control-geocoder',
+            container = this._container = L.DomUtil.create('div', className);
+
+        if (!L.Browser.touch) {
+            L.DomEvent.disableClickPropagation(container);
+        } else {
+            L.DomEvent.addListener(container, 'click', L.DomEvent.stopPropagation);
+        }
+
+        var form = this._form = L.DomUtil.create('form', className + '-form');
+
+        var input = this._input = document.createElement('input');
+        input.type = "text";
+
+        var submit = document.createElement('button');
+        submit.type = "submit";
+        submit.innerHTML = this.options.text;
+
+        form.appendChild(input);
+        form.appendChild(submit);
+
+        L.DomEvent.addListener(form, 'submit', this._geocode, this);
+
+        if (this.options.collapsed) {
+            L.DomEvent.addListener(container, 'mouseover', this._expand, this);
+            L.DomEvent.addListener(container, 'mouseout', this._collapse, this);
+
+            var link = this._layersLink = L.DomUtil.create('a', className + '-toggle', container);
+            link.href = '#';
+            link.title = 'Bing Geocoder';
+
+            L.DomEvent.addListener(link, L.Browser.touch ? 'click' : 'focus', this._expand, this);
+
+            this._map.on('movestart', this._collapse, this);
+        } else {
+            this._expand();
+        }
+
+        container.appendChild(form);
+
+        return container;
+    },
+
+    _geocode : function (event) {
+        L.DomEvent.preventDefault(event);
+        this._callbackId = "_l_binggeocoder_" + (this._callbackId++);
+        window[this._callbackId] = L.Util.bind(this.options.callback, this);
+
+        var params = {
+            query: this._input.value,
+            key : this.key,
+            jsonp : this._callbackId
+        },
+        url = "http://dev.virtualearth.net/REST/v1/Locations" + L.Util.getParamString(params),
+        script = document.createElement("script");
+
+        script.type = "text/javascript";
+        script.src = url;
+        script.id = this._callbackId;
+        document.getElementsByTagName("head")[0].appendChild(script);
+    },
+
+    _expand: function () {
+        L.DomUtil.addClass(this._container, 'leaflet-control-geocoder-expanded');
+    },
+
+    _collapse: function () {
+        this._container.className = this._container.className.replace(' leaflet-control-geocoder-expanded', '');
+    }
 });
 
 
